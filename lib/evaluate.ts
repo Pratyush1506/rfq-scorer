@@ -3,7 +3,7 @@ import { generateText, Output } from "ai";
 import { z } from "zod";
 import { getRfq, insertEvaluation, type Evaluation } from "./db";
 
-const MODEL_ID = process.env.GEMINI_MODEL ?? "gemini-pro-latest";
+const MODEL_ID = process.env.GEMINI_MODEL ?? "gemini-3.5-flash";
 
 // Bump when the prompt or rubric changes, so old scores can be told apart.
 const SCORING_VERSION = "llm-direct-v1";
