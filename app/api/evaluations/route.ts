@@ -20,7 +20,12 @@ export async function GET() {
 
 // Runs one evaluation, stores it, and returns the saved record.
 export async function POST(request: Request) {
-  const parsed = requestSchema.safeParse(await request.json().catch(() => null));
+  const body = await request.json().catch(() => null);
+  if (body === null) {
+    return Response.json({ error: "Request body must be JSON" }, { status: 400 });
+  }
+
+  const parsed = requestSchema.safeParse(body);
   if (!parsed.success) {
     return Response.json(
       { error: parsed.error.issues[0]?.message ?? "Invalid request" },

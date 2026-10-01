@@ -96,10 +96,15 @@ function open(): Database.Database {
   return db;
 }
 
-// Reuse one connection across dev-server hot reloads.
+// Opened lazily on first query, not at import: `next build` imports this module
+// from several workers at once, and on a fresh clone they would all race to
+// create and seed the same file ("database is locked").
+// Cached on globalThis so dev-server hot reloads reuse one connection.
 const globalForDb = globalThis as unknown as { db?: Database.Database };
-export const db = globalForDb.db ?? open();
-if (process.env.NODE_ENV !== "production") globalForDb.db = db;
+
+export function getDb(): Database.Database {
+  return (globalForDb.db ??= open());
+}
 
 type RfqRow = { id: string; title: string; body: string; markdown: string };
 
@@ -108,14 +113,14 @@ function toRfq(row: RfqRow): Rfq {
 }
 
 export function listRfqs(): { id: string; title: string }[] {
-  return db.prepare("SELECT id, title FROM rfqs ORDER BY id").all() as {
+  return getDb().prepare("SELECT id, title FROM rfqs ORDER BY id").all() as {
     id: string;
     title: string;
   }[];
 }
 
 export function getRfq(id: string): Rfq | undefined {
-  const row = db.prepare("SELECT * FROM rfqs WHERE id = ?").get(id) as
+  const row = getDb().prepare("SELECT * FROM rfqs WHERE id = ?").get(id) as
     | RfqRow
     | undefined;
   return row && toRfq(row);
@@ -170,7 +175,7 @@ function toEvaluation(row: EvaluationRow): Evaluation {
 export function insertEvaluation(
   e: Omit<Evaluation, "id" | "createdAt">,
 ): Evaluation {
-  const row = db
+  const row = getDb()
     .prepare(
       `INSERT INTO evaluations
          (rfq_id, rfq_title, vendor_name, vendor_profile, score, result, model, scoring_version, created_at)
@@ -192,7 +197,7 @@ export function insertEvaluation(
 }
 
 export function listEvaluations(limit = 50): Evaluation[] {
-  const rows = db
+  const rows = getDb()
     .prepare("SELECT * FROM evaluations ORDER BY created_at DESC, id DESC LIMIT ?")
     .all(limit) as EvaluationRow[];
   return rows.map(toEvaluation);
