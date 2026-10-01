@@ -9,10 +9,10 @@ This is read as carefully as the code.
 
 What you used and why. One line each.
 
-- Frontend: Next.js (React) — easy to set up frontend and backend in one project, and has good support with the AI SDK.
+- Frontend: Next.js (React) — easy to set up frontend and backend in one project, and has good support with the AI SDK by Vercel.
 - Backend: Next.js API routes — same project as the frontend, so nothing extra to set up or run.
-- Database: SQLite (better-sqlite3) — a single local file, no database server needed.
-- LLM / agent: Vercel AI SDK + Zod + Gemini (free) - simple way to make one LLM call and get structured output back. 
+- Database: SQLite (better-sqlite3) — a single local file, no database server needed, db lives in the code.
+- LLM / agent: Vercel AI SDK + Zod + Gemini (free) - simple way to make one LLM call and get structured output back using Zod. 
 
 ---
 
@@ -22,23 +22,35 @@ How does your agent arrive at a number? What did you do to make that number
 mean something?
 
 ---
-- v0 - i prepared a system prompt with set of rules, the user input and the rfq doc and instructed it to just give the score
+- v0 - LLM Picks the score
+    - one llm call with system prompt of rules + plus rfq markdown + vendor profile
+    - mandatory fail → score ≤ 40, required items weigh most, preferred is a bonus
+    - Zod forced the output: score (0–100), 3 reasons, 2 gaps.
 - v1 
-    - used the rfq.json, and firsrt preaprae a check list consisting madatory, requried, technical, and preffered.
-    - used llm to label each requirment
-    - calculated score with the response from the llm
-    - point share for each - requried - 40, Technical - 40, Preferred - 20
-    - if mandotry fails it drops the score by 40%
+    - built a checklist from the RFQ JSON (mandatory, required, technical + delivery, preferred) and sent it with the RFQ markdown
+    - one gemini calls labels each check list with met, not met and partially met
+    - divided the scoring weight among required, technical and preferred as 40, 40, 20.
+    - score: met 1×, partial 0.5×, not met 0× of the item's share
+    - Mandatory fails → score × 0.4 (max 40)
 
 ## What you built
 
 What works. Be specific.
 
 ---
-- UI - RFQ options can be slected, user can upload md or text or paste the text in the UI
-- backend - the system then scores it against the rfqs making an llm call and gives the output in UI with score and reasons and gaps
-- DB - for storing the results
+  - UI (single page):
+      - pick an RFQ from a dropdown
+      - paste a vendor profile or upload a .txt / .md file (rejects empty, >200 KB or binary files)
+      - result shows score (colour-coded), 3 reasons and 2 gaps
+      - past evaluations listed below, most recent first
 
+- Backend:
+      - API to list RFQs, run an evaluation, and list past evaluations
+      - one Gemini call per evaluation; the score is calculated in code
+      - Used Zod for structured output
+- DB (SQLite):
+      - stores the RFQs and every evaluation with its score, reasons, gaps and breakdown
+      - set up and seeded automatically on first run
 
 
 ## What you skipped
@@ -46,7 +58,7 @@ What works. Be specific.
 What you consciously left out, and why.
 
 ---
-- differnt file format for input like pdf. 
+- different file format for input like pdf. 
 - handling edge case like, input is not valid
 
 
@@ -57,8 +69,8 @@ and what did you do about it?
 
 ---
 - 3 reasons and 2 gaps - what if a vendor does not have the real strength or the gaps.
-- description about Tool usage - i didn't use any
-- Which LLm to use, i used gemini as it was free but has req limit
+- description about Tool usage - i didn't use any, could use to validate rfq against real world data if required.
+- Used Gemini (Flash) for the free tier. The downside is a 20 requests/day limit, which I hit during testing.
 
 
 ## What broke
@@ -88,13 +100,13 @@ The thing you would be least comfortable defending. Be specific — name the
 file or function.
 
 ---
-- handling the inputs - invalid input, just a "hello" word would still make a call to the model with failed output or zero score
-- individual functions edge cases and error handling
+- handling the inputs - invalid input, just a "hello" word would still make a call to the model with failed output or zero score.
+- individual functions edge cases and error handling - didn't perform unit and sanity test on individual functions, can break under expected response
 
 ## Next 48 hours
 
 If you had two more days, what is the first thing you would change?
-- i would focus on the scoring logic here more.
-- understand the rafq docs sturcutre and cover edge cases and make the system handle any type of vendor profile
-- add multiple file format options
-- better handling for support reasoning and gaps logic
+- I would focus on the scoring logic here more example - right now the mandatory check drops the score, it should disqualify it.
+- add quantity and material to the checklist
+- support multiple file formats, like pdf, word
+- Improve system prompt with example and define stricter rule for the requirements example - add examples and stricter rules to the system prompt for each requirement, so the supporting reasons and gaps come out clearer and more accurate.

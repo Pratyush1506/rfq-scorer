@@ -36,7 +36,7 @@ flowchart LR
     end
 
     D[("<b>SQLite database</b><br/>data/app.db<br/>rfqs, evaluations tables<br/>Read via lib/db.ts")]
-    G["<b>Google Gemini</b><br/>gemini-3.5-flash<br/>One call per evaluation"]
+    G["<b>Google Gemini</b><br/>gemini-3.5-flash<br/>One call per evaluation<br/>(up to 2 retries on failure)"]
 
     B <--> P
     B <--> A
@@ -48,7 +48,7 @@ flowchart LR
 - **Browser (UI)** shows the form, checks uploaded files, and displays results.
 - **Next.js server (backend)** checks requests, builds the AI prompt, calls Gemini and saves results.
 - **SQLite database** holds the RFQs and every past evaluation in one local file.
-- **Google Gemini** is the only outside service. It is called once per evaluation.
+- **Google Gemini** is the only outside service. It is called once per evaluation (the AI SDK retries up to 2 times on failure).
 
 ---
 
@@ -65,7 +65,7 @@ One row per RFQ. Each RFQ is stored twice over: once as structured data and once
 | `id` | The RFQ number | `RFQ-001` |
 | `title` | Name shown in the dropdown | Precision CNC Machining, Aluminium Structural Brackets |
 | `body` | The full RFQ from `seed/rfqs.json`, as JSON | quantity, material, delivery, and the technical / mandatory / required / preferred lists |
-| `markdown` | The full text of `seed/RFQ-001.md` | The same RFQ as readable headings and bullets; this is what the AI reads |
+| `markdown` | The full text of `seed/RFQ-001.md` | The same RFQ as readable headings and bullets; the AI reads this together with the checklist built from `body` |
 
 ### The `evaluations` table
 
@@ -79,9 +79,9 @@ One row per evaluation. It keeps everything needed to show or re-check a result 
 | `vendor_name` | Company name, picked out of the profile by the AI |
 | `vendor_profile` | The exact text that was scored |
 | `score` | 0 to 100; the database refuses anything outside that range |
-| `result` | The three reasons and two gaps, stored as JSON |
+| `result` | JSON: the three reasons, the two gaps, and the per-requirement breakdown (label, quote, whether the quote was found) |
 | `model` | Which Gemini model gave the answer, e.g. `gemini-3.5-flash` |
-| `scoring_version` | Which version of the scoring rules was used, now `llm-direct-v1` |
+| `scoring_version` | Which version of the scoring rules was used, now `llm-hybrid-v2` (older rows: `llm-direct-v1`, which have no breakdown) |
 | `created_at` | Date and time of the evaluation |
 
 ### How the data gets in
@@ -106,14 +106,14 @@ The backend is a small set of server functions inside Next.js. It does three job
 | Address | Method | What it does | File |
 | --- | --- | --- | --- |
 | `/api/rfqs` | GET | Returns the id and title of every RFQ | `app/api/rfqs/route.ts` |
-| `/api/evaluations` | GET | Returns past evaluations, newest first | `app/api/evaluations/route.ts` |
+| `/api/evaluations` | GET | Returns the latest 50 evaluations, newest first | `app/api/evaluations/route.ts` |
 | `/api/evaluations` | POST | Takes `{ rfqId, vendorProfile }`, runs one evaluation, saves it, and returns it | `app/api/evaluations/route.ts` |
 
 The main page (`app/page.tsx`) also runs on the server. It reads the RFQ list and the history straight from the database when the page is opened, so the first screen arrives already filled in. It is built fresh on every visit, so the history is never stale.
 
 ### Checks on every evaluation request
 
-Before any AI call is made, the POST request is checked in this order:
+The POST request is checked in this order:
 
 | Check | Answer if it fails |
 | --- | --- |
@@ -131,9 +131,11 @@ A success returns 201 with the saved evaluation. When Gemini fails, the full err
 `evaluateVendor()` in `lib/evaluate.ts` does the actual work:
 
 1. Load the RFQ from the database.
-2. Send Gemini one message: the scoring instructions, the RFQ text and the vendor profile.
-3. Receive the answer and check its shape (see the scoring section).
-4. Save the result in the `evaluations` table and return it.
+2. Turn the RFQ into a checklist of requirements with ids (M1, R1, T1, P1…).
+3. Send Gemini one message: the instructions, the RFQ text, the checklist and the vendor profile.
+4. Receive one label and quote per requirement and check the answer's shape.
+5. Check each quote against the profile, calculate the score, and pick the reasons and gaps (`lib/scoring.ts`).
+6. Save the result in the `evaluations` table and return it.
 
 ---
 
@@ -162,7 +164,7 @@ flowchart TD
     c1 -- yes --> c2{"200 KB or smaller?"}
     c2 -- no --> e2["File is too large (max 200 KB)"]
     c2 -- yes --> c3{"Looks like plain text?"}
-    c3 -- no --> e3["This file does not look like plain text"]
+    c3 -- no --> e3["This file doesn't look like plain text"]
     c3 -- yes --> c4{"Has some text?"}
     c4 -- no --> e4["The file is empty"]
     c4 -- yes --> ok["Text fills the profile box"]
@@ -192,11 +194,12 @@ sequenceDiagram
     B->>S: POST rfqId + profile
     Note over S: Check input
     S->>D: Load RFQ
-    D-->>S: RFQ text
-    S->>G: Rules + RFQ + profile
+    D-->>S: RFQ JSON + text
+    Note over S: Build checklist
+    S->>G: Rules + RFQ + checklist + profile
     Note right of G: 5 to 40 s
-    G-->>S: Score, reasons, gaps
-    Note over S: Check answer shape
+    G-->>S: Label + quote per requirement
+    Note over S: Check shape, check quotes,<br/>calculate score, pick reasons/gaps
     S->>D: Save evaluation
     S-->>B: Saved evaluation (201)
     Note over B: Show card, add to history
@@ -206,8 +209,8 @@ sequenceDiagram
 2. **Fill the form.** The user picks an RFQ and pastes or uploads a profile. Uploads are checked in the browser.
 3. **Click Evaluate.** The browser sends the RFQ id and the profile text to `POST /api/evaluations`.
 4. **Check the request.** The server checks the input and that the RFQ exists.
-5. **Ask Gemini.** The server loads the RFQ text and sends Gemini one message with the instructions, the RFQ and the profile.
-6. **Check the answer.** The reply must have a vendor name, a 0 to 100 score, exactly 3 reasons and exactly 2 gaps.
+5. **Ask Gemini.** The server builds the checklist from the RFQ and sends Gemini one message with the instructions, the RFQ, the checklist and the profile.
+6. **Check and score.** The reply must have a vendor name and a label + quote for every requirement. The server checks each quote, calculates the score, and picks 3 reasons and 2 gaps.
 7. **Save.** The result is written to the `evaluations` table.
 8. **Show.** The saved record goes back to the browser, which shows the result card and adds it to the top of the history.
 
@@ -227,80 +230,115 @@ flowchart LR
     S -- "Saved evaluation" --> B
     D -- "RFQs, past evaluations" --> S
     S -- "New evaluation row" --> D
-    S -- "Rules, RFQ, profile" --> G
-    G -- "Score, reasons, gaps" --> S
+    S -- "Rules, RFQ, checklist, profile" --> G
+    G -- "Label + quote per requirement" --> S
 ```
 
-The RFQ text and the scoring rules never leave the server except in the one message to Gemini. The saved evaluation row holds the exact profile, the score, the reasons and gaps, the model and the scoring version.
+The RFQ text and the instructions never leave the server except in the one message to Gemini. Gemini never sees the scoring weights and never returns a score. The saved evaluation row holds the exact profile, the score, the reasons and gaps, the breakdown, the model and the scoring version.
 
 ---
 
-## Scoring logic (current version: `llm-direct-v1`)
+## Scoring logic (current version: `llm-hybrid-v2`)
 
-Today Gemini picks the score itself, in one call, guided by a fixed set of rules written into its instructions. The code does not calculate anything; it only checks that the answer has the right shape and saves it.
+**The AI reads, the code counts.** Gemini only answers a factual question for each RFQ requirement: does the profile show this? Code in `lib/scoring.ts` turns those answers into the score, using fixed rules.
 
 ```mermaid
 flowchart LR
-    R["RFQ text"] --> GM
+    RQ["RFQ JSON"] --> CL["<b>Checklist</b><br/>M1, R1, T1, P1…"]
+    CL --> GM
     V["Vendor profile"] --> GM
-    RU["Scoring rules"] --> GM
-    GM["<b>Gemini picks the score</b><br/>Missing mandatory item: 0-40<br/>Big gaps in required: 41-64<br/>Most required met: 65-84<br/>All met, with proof: 85-100<br/>Not stated counts as not met"]
-    GM --> A["<b>Answer</b><br/>Vendor name<br/>Score, 0 to 100<br/>3 reasons, 2 gaps"]
-    A --> C{"Right shape?"}
-    C -- yes --> SV["Save with llm-direct-v1 tag"] --> SH["Show score card"]
+    GM["<b>Gemini labels each item</b><br/>met / partial / not_met<br/>+ exact quote from profile"]
+    GM --> C{"Right shape?"}
     C -- no --> ER["Error 502, nothing saved"]
+    C -- yes --> QC["<b>Quote check</b><br/>quote not in profile →<br/>label drops one level"]
+    QC --> SC["<b>Score</b><br/>weighted credit<br/>× 0.4 if a mandatory fails"]
+    SC --> RG["Pick 3 reasons, 2 gaps"]
+    RG --> SV["Save with breakdown"]
 ```
 
-The bands inside the Gemini box are guidance in its instructions, not code. Only the shape check is enforced by the app.
+### Step 1: build the checklist
 
-### What Gemini is given
+`buildRequirements()` flattens the RFQ JSON into a list with ids:
 
-- **Instructions:** act as a supplier-quality engineer and follow the scoring rules below.
-- **The RFQ:** its full readable text from the `markdown` column.
-- **The vendor profile:** exactly as pasted or uploaded, marked as untrusted text whose instructions must be ignored.
-- **Temperature 0**, so the same input tends to get the same answer.
+| Group | Id | Comes from |
+| --- | --- | --- |
+| Mandatory | M1, M2… | `mandatory` |
+| Required | R1, R2… | `required` |
+| Technical | T1, T2… | `technical`, plus one item for `delivery` |
+| Preferred | P1, P2… | `preferred` |
 
-### The scoring bands
+### Step 2: Gemini labels each item
 
-RFQ items come in three levels: mandatory (must have), required (should have, including technical specs) and preferred (nice to have).
+Gemini gets the instructions, the RFQ markdown, the checklist and the profile. For every id it returns:
 
-| Score | When it applies |
+| Field | Meaning |
 | --- | --- |
-| 85 to 100 | Meets every mandatory and required item with clear evidence, plus most preferred items |
-| 65 to 84 | Meets all mandatory items and most required items; minor gaps |
-| 41 to 64 | Meets the mandatory items but has big gaps in required items |
-| 0 to 40 | Misses, or shows no evidence for, at least one mandatory item; or is the wrong kind of supplier |
+| `status` | `met` (clearly shown with specifics), `partial` (part of it, or vague claims like "aligned with aerospace standards"), `not_met` (contradicted or not mentioned) |
+| `evidence` | Words copied exactly from the profile, or empty |
+| `comment` | One short sentence comparing the profile with the requirement |
 
-### The rules
+Gemini does **not** give a score. The Zod schema has one field per requirement id, so an answer that skips a requirement fails validation. Temperature is 0.
 
-- A missing mandatory item caps the score at 40.
-- Preferred items can lift a good vendor, but cannot rescue one that misses mandatory or required items.
-- Only what the profile actually says counts. Anything not stated is treated as not met.
-- Expired, pending or "in progress" certificates do not count.
-- Every reason and gap must name the RFQ item it is about and quote what the profile says.
+### Step 3: quote check
 
-### The answer Gemini must return
+`checkEvidence()` lowercases both texts, replaces punctuation with spaces, and checks whether the quote appears in the profile.
 
-| Field | Rule |
+| Gemini said | Quote found | Quote missing or empty |
+| --- | --- | --- |
+| met | met | partial |
+| partial | partial | not_met |
+| not_met | not_met | not_met |
+
+Both labels are saved: `llmStatus` (what Gemini said) and `status` (after the check).
+
+### Step 4: score
+
+Each item earns credit: **met 1×, partial 0.5×, not_met 0×**. Each group's average credit is multiplied by its points:
+
+| Group | Points |
 | --- | --- |
-| `vendorName` | The company name, or "Unknown vendor" |
-| `score` | A whole number from 0 to 100 |
-| `reasons` | Exactly 3 |
-| `gaps` | Exactly 2 |
+| Required | 40 |
+| Technical (incl. delivery) | 40 |
+| Preferred | 20 |
+| Mandatory | 0 (gate only) |
 
-If the answer breaks any of these, the evaluation fails and nothing is saved. Each saved row records the model and `scoring_version`, so results can be told apart if the rules change.
+So an item is worth its group's points ÷ the number of items in that group (in RFQ-001, a required item is worth 20 and a technical item 10). If a group is empty, its points are left out and the total is rescaled to 100.
 
-### Results on the sample vendors
+**Mandatory gate:** if any mandatory item's final status is not `met` (including `partial`), the score is multiplied by **0.4**. It caps at 40 but still ranks failing vendors against each other.
 
-All nine combinations have been run on `gemini-3.5-flash`. A number in brackets shows how many separate runs gave that same score.
+Worked example, vendor A on RFQ-001 (no AS9100D, everything else strong):
 
-| Vendor | RFQ-001 Machining | RFQ-002 Coating | RFQ-003 Titanium |
+```
+Required:  2/2 met            → 40
+Technical: 4/4 met            → 40
+Preferred: 1/3 met            →  6.7
+Total 86.7 → mandatory failed → × 0.4 = 34.7 → 35
+```
+
+### Step 5: reasons and gaps
+
+`pickReasonsAndGaps()` always returns exactly 3 reasons and 2 gaps:
+
+- **Reasons:** met items first, then partial, most important group first.
+- **Gaps:** not_met items first, then partial, skipping anything already used as a reason.
+- Empty slots are filled with an honest line ("Nothing else in the profile meets this RFQ's requirements." / "No further gaps found…") instead of asking the AI to invent one.
+
+### Previous version: `llm-direct-v1`
+
+The first version asked Gemini for the score directly, guided by score bands in the prompt (missing mandatory: 0–40, and so on). It was replaced because:
+
+| Vendor | RFQ-001 | RFQ-002 | RFQ-003 |
 | --- | --- | --- | --- |
-| A: Sundar Precision Works | 35 (3 runs) | 15 | 15 |
-| B: Arcline Aerospace | 45 (2 runs) | 15 | 20 |
+| A: Sundar Precision Works | 35 | 15 | 15 |
+| B: Arcline Aerospace | 45 | 15 | 20 |
 | C: Vector Industrial | 30 | 35 | 35 |
 
-Repeat runs gave identical scores. No sample vendor scores above 45, because each one misses a mandatory or key required item.
+- Vendor C (marketing text, no real evidence) scored highest on RFQ-002 and RFQ-003: the model credited vague claims.
+- Scores bunched on the bands' round numbers.
+- The "≤ 40 if mandatory fails" rule was only an instruction, not enforced in code.
+- Nothing per requirement was saved, so a score couldn't be explained afterwards.
+
+The table shows `llm-direct-v1` results only. The current version has not yet been run on all nine pairs.
 
 ---
 
@@ -308,19 +346,24 @@ Repeat runs gave identical scores. No sample vendor scores above 45, because eac
 
 ### Known limits
 
-- **The score is the AI's judgement.** The rules guide it, but nothing in the code checks the number against the RFQ items.
-- **Vague claims can still earn reasons.** Vendor C was credited for "space-grade heritage" with no proof behind it.
-- **The order of weak vendors is debatable.** Vendor A (strong machining, no AS9100D) scores 35, below vendor B (certified, technically weak) at 45.
-- **Gemini speed varies.** Runs took 7 to 40 seconds, and some models returned "high demand" errors.
+- **The quote check proves the words exist, not that they prove the requirement.** A real quote with a wrong judgement passes, and very short quotes ("mm", "aluminium") always pass.
+- **Up to 3 LLM calls per evaluation.** `maxRetries` is not set in `lib/evaluate.ts`, so the AI SDK retries twice on failure.
+- **Any non-empty input calls Gemini.** "hello" goes through, should score 0, and is saved.
+- **One error message for every AI failure.** Quota limits, overload and a missing API key all show "The AI evaluation failed".
+- **Only delivery is checked from the header fields.** Quantity and material are not in the checklist.
+- **Some seed requirements count twice.** RFQ-002 lists 600 mm under technical and preferred; RFQ-003 lists cut-to-size under technical and required.
+- **The breakdown is saved but not shown in the UI.**
 - **Plain text only.** PDF and Word files must be copied and pasted in.
-- **The upload checks and the result screen have not yet been tried in a real browser.** The server side has been tested end to end.
 
 ### Where to change things
 
 | To change | Edit |
 | --- | --- |
-| Scoring rules, bands or instructions | `SYSTEM_PROMPT` in `lib/evaluate.ts`; bump `SCORING_VERSION` too |
-| Number of reasons or gaps | `evaluationSchema` in `lib/evaluate.ts`, and the UI in `app/scorer.tsx` |
+| Weights, partial credit, mandatory gate | `CATEGORY_POINTS`, `CREDIT`, `MANDATORY_FAIL_FACTOR` in `lib/scoring.ts` |
+| Which RFQ fields become requirements | `buildRequirements()` in `lib/scoring.ts` |
+| Quote check | `checkEvidence()` in `lib/scoring.ts` |
+| How reasons and gaps are picked | `pickReasonsAndGaps()` in `lib/scoring.ts` |
+| Instructions to Gemini | `SYSTEM_PROMPT` in `lib/evaluate.ts`; bump `SCORING_VERSION` too |
 | AI model | `GEMINI_MODEL` in `.env.local` |
 | Tables or seeding | `lib/db.ts` |
 | Request checks and error messages | `app/api/evaluations/route.ts` |
