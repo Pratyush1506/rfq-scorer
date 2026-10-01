@@ -56,7 +56,7 @@ Anything ambiguous, contradictory, or underspecified. What did you assume,
 and what did you do about it?
 
 ---
-- Exactly 3 reasons and 2 gaps - what if a vendor does not have the real strength or the gaps.
+- 3 reasons and 2 gaps - what if a vendor does not have the real strength or the gaps.
 - description about Tool usage - i didn't use any
 - Which LLm to use, i used gemini as it was free but has req limit
 
@@ -67,7 +67,7 @@ Something that did not work first time. What was it, how did you diagnose it,
 how did you fix it?
 
 ---
-- but the api req were failing. Checked the gemini dashboard and generated new api keys for this
+- Api requests were failing. Checked the gemini dashboard and generated new api keys for this as they were failing because of rate limit
 
 ## Working with AI
 
@@ -79,7 +79,7 @@ them, not whether you did.
 - Something you decided to write yourself rather than generate, and why:
 
 ---
-- I used claude code for the development and other ai models for discussing the scoring logic approaches for this
+- I used claude code for the development and other ai models for discussing the scoring logic approaches for this.
 - Tech stack and setting up the project.
 
 ## Weakest part of this code
@@ -88,10 +88,13 @@ The thing you would be least comfortable defending. Be specific — name the
 file or function.
 
 ---
-- handling the inputs - invalid input, just a "hello" word would still make a call to the model with the score
+- handling the inputs - invalid input, just a "hello" word would still make a call to the model with failed output or zero score
+- individual functions edge cases and error handling
 
 ## Next 48 hours
 
 If you had two more days, what is the first thing you would change?
-- i would fous on the scoring logic here more.
-- understand the rfq docs sturcutre and cover ede cases
+- i would focus on the scoring logic here more.
+- understand the rafq docs sturcutre and cover edge cases and make the system handle any type of vendor profile
+- add multiple file format options
+- support reasoning and gaps logic
