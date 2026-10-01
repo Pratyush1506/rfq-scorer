@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
+import type { Assessment } from "./scoring";
 
 const DB_PATH = path.join(process.cwd(), "data", "app.db");
 const SEED_DIR = path.join(process.cwd(), "seed");
@@ -129,6 +130,7 @@ export function getRfq(id: string): Rfq | undefined {
 export type EvaluationResult = {
   reasons: string[];
   gaps: string[];
+  breakdown?: Assessment[]; // per-requirement verdicts; absent on llm-direct-v1 rows
 };
 
 export type Evaluation = {
