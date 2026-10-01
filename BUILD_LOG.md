@@ -97,4 +97,4 @@ If you had two more days, what is the first thing you would change?
 - i would focus on the scoring logic here more.
 - understand the rafq docs sturcutre and cover edge cases and make the system handle any type of vendor profile
 - add multiple file format options
-- support reasoning and gaps logic
+- better handling for support reasoning and gaps logic
