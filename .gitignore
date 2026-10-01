@@ -42,7 +42,4 @@ next-env.d.ts
 
 # keep env template, ignore local db
 !.env.example
-*.db
-*.db-journal
-*.db-wal
-*.db-shm
+
