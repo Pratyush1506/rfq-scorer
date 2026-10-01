@@ -6,9 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "seed": "tsx scripts/seed.ts"
   },
   "dependencies": {
+    "@ai-sdk/google": "^3.0.130",
     "ai": "^6.0.299",
     "better-sqlite3": "^12.11.1",
     "next": "16.3.8",
