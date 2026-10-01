@@ -1,36 +1,75 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# RFQ Vendor Scorer
 
-## Getting Started
+Scores a vendor profile against an RFQ. Pick an RFQ, paste or upload a vendor
+profile, and get a score out of 100 with three reasons and two gaps. Past
+evaluations are listed below, newest first.
 
-First, run the development server:
+For how it works inside, see [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md).
+
+## Prerequisites
+
+- **Node.js 20.9 or newer.** Check with `node -v`.
+- **A Google Gemini API key.** Get a free one at https://aistudio.google.com/apikey
+
+## Getting started
+
+**1. Clone the repo and install dependencies**
+
+```bash
+git clone <repo-url>
+cd rfq-scorer
+npm install
+```
+
+**2. Add your API key**
+
+```bash
+cp .env.example .env.local
+```
+
+Open `.env.local` and paste your key:
+
+```
+GOOGLE_GENERATIVE_AI_API_KEY=your-key-here
+```
+
+**3. Start the app**
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+The database (`data/app.db`) is created and loaded with the three RFQs from
+`seed/` automatically on first run. No separate step is needed.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Using the app
 
-## Learn More
+1. Pick an RFQ from the dropdown.
+2. Paste a vendor profile into the text box, or click **Upload .txt / .md**.
+   Sample profiles are in `samples/` (`vendor-a.txt`, `vendor-b.txt`, `vendor-c.txt`).
+3. Click **Evaluate** and wait a few seconds (usually 5–40).
+4. Read the score, three reasons and two gaps.
+5. Scroll down to see past evaluations. Click a row to expand it.
 
-To learn more about Next.js, take a look at the following resources:
+Only `.txt` and `.md` files up to 200 KB can be uploaded. For PDF or Word,
+copy the text and paste it in.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Other commands
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Command | What it does |
+| --- | --- |
+| `npm run seed` | Reloads the RFQs from `seed/`. Past evaluations are kept. |
+| `npm run build` then `npm start` | Runs the production version. |
 
-## Deploy on Vercel
+To start with an empty database, delete the `data/` folder and restart the app.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Environment variables
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Variable | Required | Description |
+| --- | --- | --- |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | Yes | Your Gemini API key. |
+| `GEMINI_MODEL` | No | Gemini model to use. Defaults to `gemini-3.5-flash`. Pro models have no free-tier quota. |
+
+`.env.local` is gitignored, so your key is never committed.
